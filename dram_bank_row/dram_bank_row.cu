@@ -36,6 +36,7 @@
 #include <ctime>
 #include <vector>
 #include <algorithm>
+#include <string>
 
 /* ================================================================== */
 /*  Macros                                                             */
@@ -669,8 +670,10 @@ static void run_phase2_hbm(char *d_buf, size_t alloc,
          lu_ok ? "ld.lu 2-element P-chase"
                : "L2-flush pair-test (fallback)");
     emit("    Reference  : offset 0\n");
+    char range_buf[32];
+    fmt_bytes(range, range_buf, sizeof(range_buf));
     emit("    Scan points: %zu  (up to %s)\n\n",
-         n_tests, ({char b[32]; fmt_bytes(range, b, sizeof(b)); b;}));
+        n_tests, range_buf);
 
     /* allocate device arrays */
     uint64_t *d_to; uint32_t *d_lat;
@@ -816,7 +819,9 @@ static void run_device(int dev, const Config &cfg, FILE *csv) {
     MemType mt = detect_mem_type(prop);
     bool    hbm = memtype_is_hbm(mt);
     size_t  l2  = (size_t)prop.l2CacheSize;
-    double  ghz = prop.clockRate / 1.0e6;
+    int clock_khz = 0;
+    CUDA_CHECK(cudaDeviceGetAttribute(&clock_khz, cudaDevAttrClockRate, dev));
+    double ghz = clock_khz / 1.0e6;
 
     size_t free_mem, total_mem;
     CUDA_CHECK(cudaMemGetInfo(&free_mem, &total_mem));
@@ -831,7 +836,7 @@ static void run_device(int dev, const Config &cfg, FILE *csv) {
          total_mem >> 20, free_mem >> 20);
     emit("  L2 Cache     : %zu KB\n", l2 >> 10);
     emit("  SM Clock     : %d MHz (%.3f GHz)\n",
-         prop.clockRate / 1000, ghz);
+     clock_khz / 1000, ghz);
     emit("  Mem bus      : %d bit\n", prop.memoryBusWidth);
 
     HBMSpec hspec{};

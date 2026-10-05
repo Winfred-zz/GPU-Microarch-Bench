@@ -157,3 +157,120 @@ Phase 1 will show flat DRAM latency (closed-page policy).  Phase 2
 > access latency depending on physical proximity.  This can widen the
 > latency distribution.  The hammer averages over many steps to reduce
 > noise.
+
+## Initial RTX 3090 Testing
+
+### Windows / CUDA compatibility
+
+`dram_bank_row` was built and tested on:
+
+- GPU: EVGA GeForce RTX 3090 FTW3 Ultra V2
+- GPU architecture: GA102 / SM 8.6
+- VRAM: 24 GB GDDR6X
+- Memory bus: 384-bit
+- L2 cache: 6 MB
+- CUDA: 13.3
+- Compiler: Visual Studio 2022 / MSVC 14.42
+
+The upstream source required several small compatibility changes to compile with CUDA 13.3 and MSVC.
+
+Added:
+
+```cpp
+#include <string>
+```
+
+Replaced a GCC statement-expression used when formatting the scan range with a normal local buffer:
+
+```cpp
+char range_buf[32];
+fmt_bytes(range, range_buf, sizeof(range_buf));
+emit("    Scan points: %zu  (up to %s)\n",
+     n_tests, range_buf);
+```
+
+CUDA 13.3 no longer exposes `cudaDeviceProp::clockRate`, so the SM clock is obtained using:
+
+```cpp
+int clock_khz = 0;
+CUDA_CHECK(cudaDeviceGetAttribute(&clock_khz, cudaDevAttrClockRate, dev));
+double ghz = clock_khz / 1.0e6;
+```
+
+The benchmark was compiled directly with `nvcc` rather than using the supplied GNU Makefile:
+
+```powershell
+nvcc -O3 -std=c++17 -lineinfo -gencode arch=compute_80,code=sm_80 -o .\dram_bank_row\dram_bank_row.exe .\dram_bank_row\dram_bank_row.cu
+```
+
+These changes are intended only as Windows/CUDA compatibility fixes. The benchmark algorithm has not been modified.
+
+### GDDR6X detection limitation
+
+The benchmark reports the RTX 3090 as `GDDR6`:
+
+```text
+NVIDIA GeForce RTX 3090  GDDR6  24575 MB  sm_86
+```
+
+The source currently classifies non-HBM GPUs as GDDR6 even though `MEM_GDDR6X` exists in the enum. This is currently only a labeling issue: the RTX 3090 still follows the intended GDDR benchmark path.
+
+The detection code has deliberately been left unchanged until a baseline has been established.
+
+### First baseline run
+
+GPU-intensive LLM workloads were stopped before testing to avoid interference with VRAM availability, cache state, memory traffic, clocks, and latency measurements.
+
+A reduced Phase 1 test was used instead of the much larger defaults:
+
+```powershell
+.\dram_bank_row\dram_bank_row.exe --device 0 --alloc 512 --steps 20000 --warmup 2000 --iters 1
+```
+
+The GPU was detected as:
+
+```text
+Compute      : 8.6
+Memory       : 24575 MB total, 23335 MB free
+L2 Cache     : 6144 KB
+SM Clock     : 1800 MHz
+Mem bus      : 384 bit
+Buffer       : 512 MB
+```
+
+Phase 1 produced a clear address-dependent latency signal:
+
+```text
+DRAM latency range : 424.2 - 645.5 cycles
+Conflict ratio     : 1.52x
+
+First conflict stride : 128 B
+Last conflict stride  : 8.0 KB
+Approx bank count     : ~64
+Approx row size       : 8.0 KB
+```
+
+Particularly strong latency peaks appeared at:
+
+```text
+1.5 KB : 645.5 cycles
+8.0 KB : 638.8 cycles
+```
+
+The `~64 banks` and `8 KB row` values are heuristic results from the benchmark and should not yet be treated as confirmed GA102 DRAM geometry.
+
+The important initial result is that the benchmark produces a strong, structured DRAM latency signal on the RTX 3090, indicating that it should be possible to proceed with address-mapping experiments.
+
+### Next step
+
+The next experiment is the GDDR pair test. This compares individual candidate addresses against a fixed reference address after flushing L2 and is intended to identify addresses exhibiting same-bank/different-row conflict behavior.
+
+The initial test will use a relatively small 2 MB search range before expanding the experiment:
+
+```powershell
+.\dram_bank_row\dram_bank_row.exe --device 0 --alloc 512 --steps 20000 --warmup 2000 --iters 1 --pair-test --pair-range 2 --pair-stride 256 --pair-iters 10 --csv pair-2mb.csv --log pair-2mb.log
+```
+
+The immediate goal is to determine whether the conflicting offsets show a repeatable pattern that can be used to begin reverse-engineering the GA102 physical-address-to-DRAM mapping.
+
+This is still an address-characterization experiment, not yet a workload capable of selectively stressing an individual GDDR6X package.
