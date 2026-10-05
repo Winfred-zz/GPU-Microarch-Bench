@@ -1,5 +1,17 @@
 # GPU-Microarch-Bench
 
+> **Fork notice.** This is a fork of
+> [peterzheng98/GPU-Microarch-Bench](https://github.com/peterzheng98/GPU-Microarch-Bench)
+> by Wenxin Zheng (research intern, Apex Lab / IPADS, SJTU). All benchmark
+> code and the probing methodology are the upstream author's work; this
+> fork's initial commit is byte-identical to upstream `main`. The fork exists
+> to extend the benchmarks for **RTX 3090 (GA102, 24 GB GDDR6X) memory
+> address-structure characterization and thermal diagnostics** of individual
+> GDDR6X devices. The upstream author is not affiliated with, endorsing, or
+> responsible for this fork or its additions. The upstream repository does not
+> publish a license; this fork preserves full attribution and makes no license
+> claim over upstream code. See `FORK-NOTES.md` for what is changed and why.
+
 CUDA micro-benchmarks for probing GPU DRAM micro-architecture.
 
 ## Benchmarks
