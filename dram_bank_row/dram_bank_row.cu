@@ -247,26 +247,56 @@ __global__ void gddr_pair_test(
 {
     if (threadIdx.x | blockIdx.x) return;
     uint32_t sink = 0;
+    // Warm up the pair-test path before recording the first candidate.
+    for (uint32_t f = 0; f < flush_lines; f++)
+        sink += ld_ca_u32(flush_buf + (uint64_t)f * 128);
+
+    asm volatile("membar.gl;");
+
+    uint32_t warm_ref = ld_cg_u32(buf + ref_off);
+    uint32_t warm_test = ld_cg_u32(buf + test_offs[0]);
+
+    sink += warm_ref + warm_test;
+
+    asm volatile("membar.gl;");
     for (int t = 0; t < n_tests; t++) {
-        uint64_t toff = test_offs[t];
-        uint64_t total = 0;
-        for (int it = 0; it < iters; it++) {
-            for (uint32_t f = 0; f < flush_lines; f++)
-                sink += ld_ca_u32(flush_buf + (uint64_t)f * 128);
-            asm volatile("membar.gl;");
-            uint32_t rv = ld_cg_u32(buf + ref_off);
-            uint32_t dep;
-            asm volatile("and.b32 %0, %1, 0;" : "=r"(dep) : "r"(rv));
-            uint64_t dep64 = dep;
-            uint64_t s, e;
-            asm volatile("mov.u64 %0, %%clock64;" : "=l"(s));
-            uint32_t tv = ld_cg_u32(buf + toff + dep64);
-            asm volatile("" ::"r"(tv));
-            asm volatile("mov.u64 %0, %%clock64;" : "=l"(e));
-            sink += rv + tv;
-            total += e - s;
+    uint64_t toff = test_offs[t];
+    uint32_t samples[32];
+
+    for (int it = 0; it < iters; it++) {
+        for (uint32_t f = 0; f < flush_lines; f++)
+            sink += ld_ca_u32(flush_buf + (uint64_t)f * 128);
+
+        asm volatile("membar.gl;");
+
+        uint32_t rv = ld_cg_u32(buf + ref_off);
+        uint32_t dep;
+        asm volatile("and.b32 %0, %1, 0;" : "=r"(dep) : "r"(rv));
+        uint64_t dep64 = dep;
+
+        uint64_t s, e;
+        asm volatile("mov.u64 %0, %%clock64;" : "=l"(s));
+        uint32_t tv = ld_cg_u32(buf + toff + dep64);
+        asm volatile("" ::"r"(tv));
+        asm volatile("mov.u64 %0, %%clock64;" : "=l"(e));
+
+        sink += rv + tv;
+        samples[it] = (uint32_t)(e - s);
+    }
+
+    // Sort the samples and use the median so occasional large
+    // scheduling/preemption stalls do not dominate the result.
+    for (int i = 1; i < iters; i++) {
+        uint32_t v = samples[i];
+        int j = i - 1;
+        while (j >= 0 && samples[j] > v) {
+            samples[j + 1] = samples[j];
+            j--;
         }
-        out_lat[t] = (uint32_t)(total / iters);
+        samples[j + 1] = v;
+    }
+
+    out_lat[t] = samples[iters / 2];
     }
     if (sink == 0xDEADBEEFu) out_lat[0] = sink;
 }
